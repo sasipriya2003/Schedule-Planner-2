@@ -49,65 +49,115 @@ const ExportControls = ({ schedule, trainers, trainingName }) => {
 
     const handlePdfExport = () => {
         const doc = new jsPDF({ orientation: 'landscape' });
-        doc.text(`${trainingName} Schedule`, 14, 15);
-
         const { batches, days, sessions, pivot } = getExpandedMatrixData();
 
-        // Prepare table body
-        const tableBody = days.map(day => {
-            const row = [day];
-            batches.forEach(batch => {
+        const batchesPerPage = 3; // Reduced to 3 for better readability on A4 Landscape
+        const totalBatchChunks = Math.ceil(batches.length / batchesPerPage);
+
+        for (let chunkIndex = 0; chunkIndex < totalBatchChunks; chunkIndex++) {
+            if (chunkIndex > 0) {
+                doc.addPage();
+            }
+
+            const startBatch = chunkIndex * batchesPerPage;
+            const endBatch = Math.min(startBatch + batchesPerPage, batches.length);
+            const currentBatches = batches.slice(startBatch, endBatch);
+
+            // Prepare table body for current chunk
+            const tableBody = days.map(day => {
+                const row = [day];
+                currentBatches.forEach(batch => {
+                    sessions.forEach(session => {
+                        row.push(pivot[day][batch][session] || '-');
+                    });
+                });
+                return row;
+            });
+
+            // Prepare table headers for current chunk
+            const headRow1 = [{ content: 'Days', rowSpan: 2, styles: { valign: 'middle', halign: 'center' } }];
+            currentBatches.forEach(batch => {
+                headRow1.push({ content: batch, colSpan: sessions.length, styles: { halign: 'center', fillColor: [220, 220, 220], textColor: [0, 0, 0], fontStyle: 'bold' } });
+            });
+
+            const headRow2 = [];
+            currentBatches.forEach(() => {
                 sessions.forEach(session => {
-                    row.push(pivot[day][batch][session] || '-');
+                    headRow2.push({ content: session, styles: { halign: 'center', fillColor: [240, 240, 240] } });
                 });
             });
-            return row;
-        });
 
-        // Prepare table headers
-        // Row 1: Days, Batch 1 (span), Batch 2 (span)...
-        const headRow1 = [{ content: 'Days', rowSpan: 2, styles: { valign: 'middle', halign: 'center' } }];
-        batches.forEach(batch => {
-            headRow1.push({ content: batch, colSpan: sessions.length, styles: { halign: 'center', fillColor: [220, 220, 220] } });
-        });
-
-        // Row 2: Session 1, Session 2... repeated
-        const headRow2 = [];
-        batches.forEach(() => {
-            sessions.forEach(session => {
-                headRow2.push(session);
+            doc.autoTable({
+                head: [headRow1, headRow2],
+                body: tableBody,
+                startY: 25,
+                styles: {
+                    fontSize: 8,
+                    cellPadding: 2,
+                    halign: 'center',
+                    lineWidth: 0.1,
+                    lineColor: [200, 200, 200],
+                    overflow: 'linebreak',
+                    rowPageBreak: 'avoid'
+                },
+                headStyles: {
+                    fillColor: [255, 255, 255],
+                    textColor: [0, 0, 0],
+                    lineWidth: 0.1,
+                    lineColor: [150, 150, 150]
+                },
+                columnStyles: {
+                    0: { fontStyle: 'bold', cellWidth: 25, halign: 'left', fillColor: [250, 250, 250] }, // Day column
+                },
+                margin: { top: 25 },
+                theme: 'grid',
+                pageBreak: 'auto',
+                showHead: 'everyPage',
+                didDrawPage: (data) => {
+                    // Add Title on every page
+                    let title = `${trainingName} Schedule`;
+                    if (totalBatchChunks > 1) {
+                        title += ` (Batches ${currentBatches[0]} - ${currentBatches[currentBatches.length - 1]})`;
+                    }
+                    doc.setFontSize(14);
+                    doc.text(title, 14, 15);
+                }
             });
-        });
-
-        doc.autoTable({
-            head: [headRow1, headRow2],
-            body: tableBody,
-            startY: 20,
-            styles: {
-                fontSize: 8,
-                cellPadding: 2,
-                halign: 'center'
-            },
-            columnStyles: {
-                0: { fontStyle: 'bold', cellWidth: 20, halign: 'left' }, // Day column
-            }
-        });
+        }
 
         // Trainer Reference Table
-        const finalY = doc.lastAutoTable.finalY || 20;
-        doc.text("Trainer Reference", 14, finalY + 15);
+        doc.addPage();
+        doc.setFontSize(14);
+        doc.text("Trainer Reference", 14, 15);
 
-        const referenceColumns = ["Trainer Name", "Type", "Topic"];
-        const referenceRows = trainers.map(t => [
-            t.name,
-            t.type,
-            t.topic || '-'
-        ]);
+        const referenceColumns = [
+            { header: "Trainer Name", dataKey: "name" },
+            { header: "Type", dataKey: "type" },
+            { header: "Topic", dataKey: "topic" }
+        ];
+
+        const referenceRows = trainers.map(t => ({
+            name: t.name,
+            type: t.type,
+            topic: t.isMultiTopic
+                ? `${t.selectedTopics.join(', ')} (Rotates every ${t.switchAfterDays} day${t.switchAfterDays > 1 ? 's' : ''})`
+                : (t.topic || '-')
+        }));
 
         doc.autoTable({
-            head: [referenceColumns],
+            columns: referenceColumns,
             body: referenceRows,
-            startY: finalY + 20,
+            startY: 20,
+            styles: {
+                fontSize: 10,
+                cellPadding: 3
+            },
+            headStyles: {
+                fillColor: [220, 220, 220],
+                textColor: [0, 0, 0],
+                fontStyle: 'bold'
+            },
+            theme: 'grid'
         });
 
         doc.save(`${trainingName}.pdf`);
@@ -162,10 +212,12 @@ const ExportControls = ({ schedule, trainers, trainingName }) => {
         XLSX.utils.book_append_sheet(wb, wsSchedule, "Schedule");
 
         // Reference Sheet
-        const referenceData = trainers.map(({ name, type, topic }) => ({
-            "Trainer Name": name,
-            Type: type,
-            Topic: topic || '-'
+        const referenceData = trainers.map(t => ({
+            "Trainer Name": t.name,
+            Type: t.type,
+            Topic: t.isMultiTopic
+                ? `${t.selectedTopics.join(', ')} (Rotates every ${t.switchAfterDays} day${t.switchAfterDays > 1 ? 's' : ''})`
+                : (t.topic || '-')
         }));
         const wsReference = XLSX.utils.json_to_sheet(referenceData);
         XLSX.utils.book_append_sheet(wb, wsReference, "Trainer Reference");
@@ -175,9 +227,6 @@ const ExportControls = ({ schedule, trainers, trainingName }) => {
 
     return (
         <div className="export-controls">
-            <button onClick={handlePdfExport} className="btn btn-danger">
-                <FileDown size={18} /> Download PDF
-            </button>
             <button onClick={handleExcelExport} className="btn btn-success">
                 <FileSpreadsheet size={18} /> Download Excel
             </button>

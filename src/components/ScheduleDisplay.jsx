@@ -59,140 +59,138 @@ const ScheduleDisplay = ({ schedule, trainers }) => {
     const { batches, days, sessions, pivot } = matrixData;
 
     const handleDownloadPDF = () => {
-        // Use A3 landscape for maximum width accommodation
-        const doc = new jsPDF({ orientation: 'landscape', format: 'a3' });
+        const doc = new jsPDF({ orientation: 'landscape' });
+        const { batches, days, sessions, pivot } = matrixData;
+        const currentTrainingName = "Training Schedule"; // Default title
 
-        // Title
-        doc.setFontSize(22);
-        doc.setTextColor(40, 40, 40);
-        doc.text("Training Schedule", 14, 20);
+        const batchesPerPage = 3; // 3 batches per page for readability
+        const totalBatchChunks = Math.ceil(batches.length / batchesPerPage);
 
-        // Schedule Table
-        const head = [];
-        // Header Row 1: Days (rowspan 2) + Batches (colspan sessions)
-        const row1 = [
-            {
-                content: 'Days',
-                rowSpan: 2,
-                styles: { valign: 'middle', halign: 'center', fillColor: [22, 163, 74], textColor: 255, fontStyle: 'bold', fontSize: 10 }
+        for (let chunkIndex = 0; chunkIndex < totalBatchChunks; chunkIndex++) {
+            if (chunkIndex > 0) {
+                doc.addPage();
             }
-        ];
 
-        // Header Row 2: Sessions
-        const row2 = [];
+            const startBatch = chunkIndex * batchesPerPage;
+            const endBatch = Math.min(startBatch + batchesPerPage, batches.length);
+            const currentBatches = batches.slice(startBatch, endBatch);
 
-        batches.forEach(batch => {
-            row1.push({
-                content: batch,
-                colSpan: sessions.length,
-                styles: { halign: 'center', fillColor: [13, 148, 136], textColor: 255, fontStyle: 'bold', fontSize: 9 }
+            // Prepare table body for current chunk
+            const tableBody = days.map(day => {
+                const row = [day];
+                currentBatches.forEach(batch => {
+                    sessions.forEach(session => {
+                        const cellData = pivot[day][batch][session];
+                        let cellContent = '-';
+                        if (cellData) {
+                            cellContent = cellData.trainerName;
+                            if (cellData.topic && cellData.topic !== '-') {
+                                cellContent += `\n[${cellData.topic}]`;
+                            }
+                        }
+                        row.push(cellContent);
+                    });
+                });
+                return row;
             });
-            sessions.forEach(session => {
-                row2.push({
-                    content: session,
-                    styles: { halign: 'center', fillColor: [240, 253, 250], textColor: 50, fontSize: 8, fontStyle: 'bold' }
+
+            // Prepare table headers for current chunk
+            const headRow1 = [{ content: 'Days', rowSpan: 2, styles: { valign: 'middle', halign: 'center', fillColor: [22, 163, 74], textColor: 255, fontStyle: 'bold' } }];
+            currentBatches.forEach(batch => {
+                headRow1.push({
+                    content: batch,
+                    colSpan: sessions.length,
+                    styles: { halign: 'center', fillColor: [13, 148, 136], textColor: 255, fontStyle: 'bold' }
                 });
             });
-        });
 
-        head.push(row1);
-        head.push(row2);
-
-        const body = days.map(day => {
-            const row = [{ content: day, styles: { valign: 'middle', halign: 'center', fontStyle: 'bold', fillColor: [241, 245, 249], fontSize: 9 } }];
-            batches.forEach(batch => {
+            const headRow2 = [];
+            currentBatches.forEach(() => {
                 sessions.forEach(session => {
-                    const cellData = pivot[day][batch][session];
-                    let cellContent = '-';
-                    if (cellData) {
-                        cellContent = cellData.trainerName;
-                        if (cellData.topic && cellData.topic !== '-') {
-                            cellContent += `\n[${cellData.topic}]`;
-                        }
-                    }
-                    row.push({
-                        content: cellContent,
-                        styles: { halign: 'center', valign: 'middle' }
+                    headRow2.push({
+                        content: session,
+                        styles: { halign: 'center', fillColor: [240, 253, 250], textColor: 50, fontSize: 12, fontStyle: 'bold' }
                     });
                 });
             });
-            return row;
-        });
 
-        autoTable(doc, {
-            startY: 30,
-            head: head,
-            body: body,
-            theme: 'grid',
-            margin: { top: 30, right: 10, bottom: 20, left: 10 },
-            styles: {
-                fontSize: 7, // Further reduced font size
-                cellPadding: 1.5,
-                lineColor: [200, 200, 200],
-                lineWidth: 0.1,
-                overflow: 'linebreak',
-                valign: 'middle'
-            },
-            headStyles: {
-                fillColor: [255, 255, 255],
-                textColor: 20,
-                lineColor: [200, 200, 200],
-                lineWidth: 0.1
-            },
-            columnStyles: {
-                0: { cellWidth: 15 } // Reduced width for Days column
-            },
-            didParseCell: (data) => {
-                if (data.section === 'body' && data.column.index > 0) {
-                    data.cell.styles.minCellWidth = 20; // Ensure minimum width for content columns
-                }
-            }
-        });
-
-        // Trainer References Table
-        const finalY = doc.lastAutoTable.finalY || 30;
-        const pageHeight = doc.internal.pageSize.height;
-
-        // Check if we need a new page for references
-        // If less than 50mm remaining, start new page
-        if (pageHeight - finalY < 50) {
-            doc.addPage();
-            doc.text("Trainer References", 14, 20);
             autoTable(doc, {
+                head: [headRow1, headRow2],
+                body: tableBody,
                 startY: 25,
-                head: [['Trainer Name', 'Type', 'Topic']],
-                body: trainers.map(t => [t.name, t.type, t.topic || '-']),
-                theme: 'striped',
-                margin: { left: 10, right: 10 },
-                styles: { fontSize: 9, cellPadding: 3 },
-                headStyles: { fillColor: [52, 73, 94], textColor: 255 },
+                styles: {
+                    fontSize: 12,
+                    cellPadding: 2,
+                    halign: 'center',
+                    lineWidth: 0.1,
+                    lineColor: [200, 200, 200],
+                    overflow: 'linebreak',
+                    rowPageBreak: 'avoid',
+                    valign: 'middle'
+                },
+                headStyles: {
+                    fillColor: [255, 255, 255],
+                    textColor: [0, 0, 0],
+                    lineWidth: 0.1,
+                    lineColor: [150, 150, 150]
+                },
                 columnStyles: {
-                    0: { cellWidth: 60 },
-                    1: { cellWidth: 40 },
-                    2: { cellWidth: 'auto' }
-                }
-            });
-        } else {
-            doc.setFontSize(14);
-            doc.text("Trainer References", 14, finalY + 15);
-
-            autoTable(doc, {
-                startY: finalY + 20,
-                head: [['Trainer Name', 'Type', 'Topic']],
-                body: trainers.map(t => [t.name, t.type, t.topic || '-']),
-                theme: 'striped',
-                margin: { left: 10, right: 10 },
-                styles: { fontSize: 9, cellPadding: 3 },
-                headStyles: { fillColor: [52, 73, 94], textColor: 255 },
-                columnStyles: {
-                    0: { cellWidth: 60 },
-                    1: { cellWidth: 40 },
-                    2: { cellWidth: 'auto' }
+                    0: { fontStyle: 'bold', cellWidth: 20, halign: 'center', fillColor: [241, 245, 249] }, // Day column
+                },
+                margin: { top: 25 },
+                theme: 'grid',
+                pageBreak: 'auto',
+                showHead: 'everyPage',
+                didDrawPage: (data) => {
+                    // Add Title on every page
+                    let title = currentTrainingName;
+                    if (totalBatchChunks > 1) {
+                        title += ` (Batches ${currentBatches[0]} - ${currentBatches[currentBatches.length - 1]})`;
+                    }
+                    doc.setFontSize(18);
+                    doc.setTextColor(40, 40, 40);
+                    doc.text(title, 14, 15);
                 }
             });
         }
 
-        doc.save('training-schedule.pdf');
+        // Trainer Reference Table
+        doc.addPage();
+        doc.setFontSize(16);
+        doc.setTextColor(40, 40, 40);
+        doc.text("Trainer Reference", 14, 15);
+
+        const referenceColumns = [
+            { header: "Trainer Name", dataKey: "name" },
+            { header: "Type", dataKey: "type" },
+            { header: "Topic", dataKey: "topic" }
+        ];
+
+        const referenceRows = trainers.map(t => ({
+            name: t.name,
+            type: t.type,
+            topic: t.isMultiTopic
+                ? `${t.selectedTopics.join(', ')} (Rotates every ${t.switchAfterDays} day${t.switchAfterDays > 1 ? 's' : ''})`
+                : (t.topic || '-')
+        }));
+
+        autoTable(doc, {
+            columns: referenceColumns,
+            body: referenceRows,
+            startY: 20,
+            styles: {
+                fontSize: 10,
+                cellPadding: 3
+            },
+            headStyles: {
+                fillColor: [52, 73, 94],
+                textColor: 255,
+                fontStyle: 'bold'
+            },
+            theme: 'striped'
+        });
+
+        doc.save("Schedule.pdf");
     };
 
     return (
@@ -261,7 +259,7 @@ const ScheduleDisplay = ({ schedule, trainers }) => {
                         <tr>
                             <th>Trainer Name</th>
                             <th>Type</th>
-                            <th>Topic</th>
+                            <th>Topics</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -273,7 +271,20 @@ const ScheduleDisplay = ({ schedule, trainers }) => {
                                         {trainer.type}
                                     </span>
                                 </td>
-                                <td>{trainer.topic || '-'}</td>
+                                <td>
+                                    {trainer.isMultiTopic ? (
+                                        <div>
+                                            <div style={{ marginBottom: '0.25rem' }}>
+                                                {trainer.selectedTopics.join(', ')}
+                                            </div>
+                                            <small style={{ color: 'var(--text-secondary)' }}>
+                                                Rotates every {trainer.switchAfterDays} day{trainer.switchAfterDays > 1 ? 's' : ''}
+                                            </small>
+                                        </div>
+                                    ) : (
+                                        trainer.topic || '-'
+                                    )}
+                                </td>
                             </tr>
                         ))}
                     </tbody>

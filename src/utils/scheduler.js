@@ -18,6 +18,29 @@ export const generateSchedule = (config, trainers) => {
     return [];
   }
 
+  // Helper to get topic based on rotation
+  const getTrainerTopic = (trainer, day) => {
+    if (!trainer.isMultiTopic) return trainer.topic || '-';
+    if (!trainer.selectedTopics || trainer.selectedTopics.length === 0) return '-';
+
+    // Calculate total cycle duration
+    const cycleDuration = trainer.selectedTopics.reduce((sum, t) => sum + (t.days || 1), 0);
+    if (cycleDuration === 0) return '-';
+
+    // Find position in cycle
+    let dayInCycle = (day - 1) % cycleDuration;
+
+    // Find which topic covers this day
+    for (const topicObj of trainer.selectedTopics) {
+      const duration = topicObj.days || 1;
+      if (dayInCycle < duration) {
+        return topicObj.name;
+      }
+      dayInCycle -= duration;
+    }
+    return '-';
+  };
+
   // Rule 1: Technical Training (only if technical trainers exist)
   const techTrainers = trainers.filter(t => t.type === 'Technical');
 
@@ -33,7 +56,7 @@ export const generateSchedule = (config, trainers) => {
             session: `Session ${s}`,
             trainerName: assignedTrainer.name,
             trainerType: assignedTrainer.type,
-            topic: assignedTrainer.topic || '-'
+            topic: getTrainerTopic(assignedTrainer, d)
           });
         }
       }
@@ -41,33 +64,64 @@ export const generateSchedule = (config, trainers) => {
   }
   // Rule 2: Mixed, Non-Technical, or Technical (fallback)
   else {
-    // Rotational assignment
-    // Ensure fair rotation across batches and sessions.
-    // Formula: (DayIndex + SessionIndex + BatchIndex) % NumTrainers
+    // Smart assignment logic
+    // Track usage to ensure fair distribution
+    const trainerUsage = {};
+    trainers.forEach(t => trainerUsage[t.id] = 0);
+
+    // Track the last training type for each batch to avoid consecutive same types
+    const lastTypeForBatch = {}; // { batchId: 'Type' }
 
     for (let d = 1; d <= days; d++) {
       for (let s = 1; s <= sessionsPerDay; s++) {
+        // Track assigned trainers for this specific time slot (day + session) across all batches
+        // to avoid double booking a trainer in the same slot
+        const assignedTrainersInSlot = new Set();
+
         for (let b = 1; b <= batches; b++) {
-          // Calculate indices (0-based)
-          const dayIdx = d - 1;
-          const sessionIdx = s - 1;
-          const batchIdx = b - 1;
+          const batchId = `Batch ${b}`;
+          const prevType = lastTypeForBatch[batchId];
 
-          // Rotation logic:
-          // Shift by day to rotate daily.
-          // Shift by session to rotate within a day.
-          // Shift by batch to ensure different batches have different trainers at the same time.
-          const trainerIndex = (dayIdx + sessionIdx + batchIdx) % trainers.length;
-          const trainer = trainers[trainerIndex];
+          // 1. Identify valid candidates (not assigned in this slot)
+          const availableTrainers = trainers.filter(t => !assignedTrainersInSlot.has(t.id));
 
+          // 2. Filter for preferred candidates (different type than previous session for this batch)
+          let candidates = availableTrainers.filter(t => t.type !== prevType);
+
+          // Fallback 1: If no candidates with different type, use any available trainer
+          if (candidates.length === 0) {
+            candidates = availableTrainers;
+          }
+
+          // Fallback 2: If no available trainers at all (e.g. more batches than trainers), 
+          // must reuse a trainer (double booking) - though ideally shouldn't happen if validated.
+          // In this case, try to at least respect the type constraint from the full pool.
+          if (candidates.length === 0) {
+            candidates = trainers.filter(t => t.type !== prevType);
+            if (candidates.length === 0) candidates = trainers;
+          }
+
+          // 3. Select the best candidate based on usage count (fairness)
+          // Sort by usage count ascending
+          candidates.sort((a, b) => trainerUsage[a.id] - trainerUsage[b.id]);
+
+          // Pick the one with least usage
+          const selectedTrainer = candidates[0];
+
+          // 4. Assign
           schedule.push({
-            batch: `Batch ${b}`,
+            batch: batchId,
             day: `Day ${d}`,
             session: `Session ${s}`,
-            trainerName: trainer.name,
-            trainerType: trainer.type,
-            topic: trainer.topic || '-'
+            trainerName: selectedTrainer.name,
+            trainerType: selectedTrainer.type,
+            topic: getTrainerTopic(selectedTrainer, d)
           });
+
+          // 5. Update tracking
+          assignedTrainersInSlot.add(selectedTrainer.id);
+          trainerUsage[selectedTrainer.id]++;
+          lastTypeForBatch[batchId] = selectedTrainer.type;
         }
       }
     }
